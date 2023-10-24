@@ -3,23 +3,23 @@ entries:
   elasticsearch:
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2023-10-24T09:33:16.157123-03:00"
+    created: "2023-10-24T09:57:56.779525-03:00"
     description: A Helm chart deploy elasticsearch for Kubernetes
-    digest: 59e770c19734fb9b20eb098762383d497d0618c7569ec65d79eed336c694cefd
+    digest: 720b9e672dfb4b2fdb9ceb4703ace04b5be75fc6903573933ab297a8fef6f492
     name: elasticsearch
     type: application
     urls:
-    - https://github.com/opsteamhub/helm-chart/elasticsearch-0.1.0.tgz
+    - https://github.com/opsteamhub/helm-chart/packages/elasticsearch-0.1.0.tgz
     version: 0.1.0
   helm-chart-test:
   - apiVersion: v2
     appVersion: 1.16.0
-    created: "2023-10-24T09:33:16.157641-03:00"
+    created: "2023-10-24T09:57:56.779958-03:00"
     description: A Helm chart for Kubernetes
-    digest: a78717db9d4779c7757d79be0b297c70136d1dd1582502055e9fc3e475bbf962
+    digest: 193df054ab6e0647cbb6011cce595c8eac1d485969d7230d39d9742f84fdc91e
     name: helm-chart-test
     type: application
     urls:
-    - https://github.com/opsteamhub/helm-chart/helm-chart-test-0.1.0.tgz
+    - https://github.com/opsteamhub/helm-chart/packages/helm-chart-test-0.1.0.tgz
     version: 0.1.0
-generated: "2023-10-24T09:33:16.154922-03:00"
+generated: "2023-10-24T09:57:56.778268-03:00"
