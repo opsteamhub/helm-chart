@@ -1,0 +1,216 @@
+{{- if and .Values.filebeat.enabled -}}
+---
+apiVersion: beat.k8s.elastic.co/v1beta1
+kind: Beat
+metadata:
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    k8s-app: filebeat-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  type: filebeat
+  version: {{ .Values.version }}
+#  elasticsearchRef:
+#    name: logging
+  config:
+    close_inactive: 1m
+    close_timeout: "0"
+    tail_files: true
+    fields_under_root: true
+    filebeat.inputs:
+    - type: container
+      paths:
+        - /var/log/containers/*.log
+      processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+          - logs_path:
+              logs_path: "/var/log/containers/"
+    processors:
+      - add_cloud_metadata:
+          providers: "aws"
+      - add_fields:
+          fields:
+            elasticsearch.name: {{ .Values.filebeat.k8s_cluster_name }}
+      - drop_fields:
+          fields: ["kubernetes.node.uid"]
+          ignore_missing: true
+
+    output.elasticsearch:
+      hosts: ${ELASTICSEARCH_URL}
+      ssl.verification_mode: none
+      username: ${ELASTICSEARCH_USER}
+      password: ${ELASTICSEARCH_PASSWORD}
+      indices:
+        - index: "ns-%{[kubernetes.namespace]}-deployment-%{[kubernetes.deployment.name]}-%{+yyyy.MM.dd}"
+          when.has_fields: ["kubernetes.deployment.name"]
+        - index: "general-%{+yyyy.MM.dd}"
+          when.not.has_fields: ["kubernetes.namespace"]
+  daemonSet:       
+    podTemplate:   
+      spec:
+        automountServiceAccountToken: true
+        serviceAccountName: filebeat-{{ .Values.elasticsearch.name }}
+        dnsPolicy: ClusterFirstWithHostNet
+        hostNetwork: true
+        securityContext:
+          runAsUser: 0
+        containers:
+        - name: filebeat
+          volumeMounts:
+          - name: varlogcontainers
+            mountPath: /var/log/containers
+          - name: varlogpods
+            mountPath: /var/log/pods
+          - name: varlibdockercontainers
+            mountPath: /var/lib/docker/containers
+          env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: ELASTICSEARCH_USER
+            value: "elastic"
+          - name: ELASTICSEARCH_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.elasticsearch.name }}-es-elastic-user 
+                key: elastic
+          - name: ELASTICSEARCH_URL
+            value: "https://{{ .Values.elasticsearch.name }}-es-ingest-data:9200"    
+          resources:
+            limits:
+              cpu: 450m
+              memory: 650Mi
+              cpu: 150m
+              memory: 300Mi
+        volumes:
+        - name: varlogcontainers
+          hostPath:
+            path: /var/log/containers
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+ name: filebeat-{{ .Values.elasticsearch.name }}
+ namespace: {{ .Values.namespace }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    k8s-app: filebeat-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+rules:
+- apiGroups: [""] 
+  resources: ["pods","namespaces", "nodes"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["apps"] 
+  resources: ["replicasets"]
+  verbs: ["get", "watch", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+ name: filebeat-{{ .Values.elasticsearch.name }}
+ labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }} 
+subjects:
+- kind: ServiceAccount
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+roleRef:
+  kind: ClusterRole
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  # should be the namespace where filebeat is running
+  namespace: {{ .Values.namespace }}
+  labels:
+    k8s-app: filebeat-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs: ["get", "create", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: filebeat-kubeadm-config-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    k8s-app: filebeat-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+    resourceNames:
+      - kubeadm-config
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}  
+subjects:
+  - kind: ServiceAccount
+    name: filebeat-{{ .Values.elasticsearch.name }}
+roleRef:
+  kind: Role
+  name: filebeat-{{ .Values.elasticsearch.name }}
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: filebeat-kubeadm-config-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}  
+subjects:
+  - kind: ServiceAccount
+    name: filebeat-{{ .Values.elasticsearch.name }}
+roleRef:
+  kind: Role
+  name: filebeat-kubeadm-config-{{ .Values.elasticsearch.name }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }} 

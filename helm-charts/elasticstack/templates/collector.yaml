@@ -1,0 +1,14 @@
+{{- if and .Values.collector.enabled -}}
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  config: |-
+    {{ toYaml .Values.collector.config  | nindent 6 }}
+{{- end }}        

@@ -1,0 +1,492 @@
+---
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: {{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  version: {{ .Values.version }}
+  nodeSets:
+    - name: master
+      count: {{ .Values.elasticsearch.master.replicas }}
+      config:
+        node.roles: ["master"]
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+          - env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: ES_JAVA_OPTS
+              value: {{ .Values.elasticsearch.master.jvm }}
+            - name: PROBE_PASSWORD_PATH
+              value: /mnt/elastic-internal/probe-user/elastic-internal-probe
+            - name: PROBE_USERNAME
+              value: elastic-internal-probe
+            - name: READINESS_PROBE_PROTOCOL
+              value: https
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ .Values.elasticsearch.name }}-es-master
+            - name: NSS_SDB_USE_CACHE
+              value: "no"
+            image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.version }}
+            imagePullPolicy: IfNotPresent
+            lifecycle:
+              preStop:
+                exec:
+                  command:
+                  - bash
+                  - -c
+                  - | 
+                    /mnt/elastic-internal/scripts/pre-stop-hook-script.sh                 
+            name: elasticsearch
+            ports:
+            - containerPort: 9200
+              name: https
+              protocol: TCP
+            - containerPort: 9300
+              name: transport
+              protocol: TCP
+            readinessProbe:
+              exec:
+                command:
+                - bash
+                - -c
+                - /mnt/elastic-internal/scripts/readiness-probe-script.sh
+              failureThreshold: 3
+              initialDelaySeconds: 10
+              periodSeconds: 5
+              successThreshold: 1
+              timeoutSeconds: 5
+            resources:
+              {{- toYaml .Values.elasticsearch.master.resources | nindent 14 }}
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+            volumeMounts:
+            - mountPath: /mnt/elastic-internal/downward-api
+              name: downward-api
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/bin
+              name: elastic-internal-elasticsearch-bin-local
+            - mountPath: /mnt/elastic-internal/elasticsearch-config
+              name: elastic-internal-elasticsearch-config
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config
+              name: elastic-internal-elasticsearch-config-local
+            - mountPath: /usr/share/elasticsearch/plugins
+              name: elastic-internal-elasticsearch-plugins-local
+            - mountPath: /usr/share/elasticsearch/config/http-certs
+              name: elastic-internal-http-certificates
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/probe-user
+              name: elastic-internal-probe-user
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config/transport-remote-certs/
+              name: elastic-internal-remote-certificate-authorities
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/scripts
+              name: elastic-internal-scripts
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config/transport-certs
+              name: elastic-internal-transport-certificates
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/unicast-hosts
+              name: elastic-internal-unicast-hosts
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/xpack-file-realm
+              name: elastic-internal-xpack-file-realm
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/data
+              name: elasticsearch-data
+            - mountPath: /usr/share/elasticsearch/logs
+              name: elasticsearch-logs
+          dnsPolicy: ClusterFirst
+          enableServiceLinks: true
+          hostname: {{ .Values.elasticsearch.name }}-es-master-0
+          initContainers:
+          - command:
+            - bash
+            - -c
+            - /mnt/elastic-internal/scripts/prepare-fs.sh
+            env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ .Values.elasticsearch.name }}-es-master
+            image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.version }}
+            imagePullPolicy: IfNotPresent
+            name: elastic-internal-init-filesystem
+            resources:
+              {{- toYaml .Values.elasticsearch.master.init.resources | nindent 14 }}
+          {{- with .Values.elasticsearch.master.tolerations }}    
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}  
+          {{- with .Values.elasticsearch.master.affinity }} 
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}    
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+            - ReadWriteOnce
+            resources:
+              requests:
+                storage: {{ .Values.elasticsearch.master.storage }}
+            storageClassName: {{ .Values.elasticsearch.master.storageClassName }}
+    - name: ingest-data
+      count: {{ .Values.elasticsearch.data.replicas }}
+      config:
+        node.roles: ["data","ingest"]
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+          - env:
+            - name: SERVER_PUBLICBASEURL
+              value: "https://{{ .Values.kibana.ingress.host }}"      
+            - name: ELASTIC_USER
+              value: "elastic"
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.elasticsearch.name }}-es-elastic-user 
+                  key: elastic          
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: PROBE_PASSWORD_PATH
+              value: /mnt/elastic-internal/probe-user/elastic-internal-probe
+            - name: PROBE_USERNAME
+              value: elastic-internal-probe
+            - name: READINESS_PROBE_PROTOCOL
+              value: https
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ .Values.elasticsearch.name }}-es-ingest-data
+            - name: NSS_SDB_USE_CACHE
+              value: "no"
+            - name: ES_JAVA_OPTS
+              value: {{ .Values.elasticsearch.data.jvm }}
+            image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.version }}
+            imagePullPolicy: IfNotPresent
+            lifecycle:
+              preStop:
+                exec:
+                  command:
+                  - bash
+                  - -c
+                  - /mnt/elastic-internal/scripts/pre-stop-hook-script.sh
+              postStart:   
+                {{ toYaml .Values.lifecycle.poststart | nindent 18 }}
+            name: elasticsearch
+            ports:
+            - containerPort: 9200
+              name: https
+              protocol: TCP
+            - containerPort: 9300
+              name: transport
+              protocol: TCP
+            readinessProbe:
+              exec:
+                command:
+                - bash
+                - -c
+                - /mnt/elastic-internal/scripts/readiness-probe-script.sh
+              failureThreshold: 3
+              initialDelaySeconds: 10
+              periodSeconds: 5
+              successThreshold: 1
+              timeoutSeconds: 5
+            resources:
+              {{- toYaml .Values.elasticsearch.data.resources | nindent 14 }}
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+            volumeMounts:
+            - mountPath: /mnt/elastic-internal/downward-api
+              name: downward-api
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/bin
+              name: elastic-internal-elasticsearch-bin-local
+            - mountPath: /mnt/elastic-internal/elasticsearch-config
+              name: elastic-internal-elasticsearch-config
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config
+              name: elastic-internal-elasticsearch-config-local
+            - mountPath: /usr/share/elasticsearch/plugins
+              name: elastic-internal-elasticsearch-plugins-local
+            - mountPath: /usr/share/elasticsearch/config/http-certs
+              name: elastic-internal-http-certificates
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/probe-user
+              name: elastic-internal-probe-user
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config/transport-remote-certs/
+              name: elastic-internal-remote-certificate-authorities
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/scripts
+              name: elastic-internal-scripts
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config/transport-certs
+              name: elastic-internal-transport-certificates
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/unicast-hosts
+              name: elastic-internal-unicast-hosts
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/xpack-file-realm
+              name: elastic-internal-xpack-file-realm
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/data
+              name: elasticsearch-data
+            - mountPath: /usr/share/elasticsearch/logs
+              name: elasticsearch-logs               
+          dnsPolicy: ClusterFirst
+          enableServiceLinks: true
+          hostname: {{ .Values.elasticsearch.name }}-es-ingest-data-1      
+          initContainers:
+          - command:
+            - bash
+            - -c
+            - /mnt/elastic-internal/scripts/prepare-fs.sh
+            env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ .Values.elasticsearch.name }}-es-ingest-data
+            image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.version }}
+            imagePullPolicy: IfNotPresent
+            name: elastic-internal-init-filesystem
+            resources:
+              {{- toYaml .Values.elasticsearch.data.init.resources | nindent 14 }}
+            securityContext:
+              privileged: false
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+            volumeMounts:
+            - mountPath: /mnt/elastic-internal/downward-api
+              name: downward-api
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/elasticsearch-bin-local
+              name: elastic-internal-elasticsearch-bin-local
+            - mountPath: /mnt/elastic-internal/elasticsearch-config
+              name: elastic-internal-elasticsearch-config
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/elasticsearch-config-local
+              name: elastic-internal-elasticsearch-config-local
+            - mountPath: /mnt/elastic-internal/elasticsearch-plugins-local
+              name: elastic-internal-elasticsearch-plugins-local
+            - mountPath: /usr/share/elasticsearch/config/http-certs
+              name: elastic-internal-http-certificates
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/probe-user
+              name: elastic-internal-probe-user
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/config/transport-remote-certs/
+              name: elastic-internal-remote-certificate-authorities
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/scripts
+              name: elastic-internal-scripts
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/transport-certificates
+              name: elastic-internal-transport-certificates
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/unicast-hosts
+              name: elastic-internal-unicast-hosts
+              readOnly: true
+            - mountPath: /mnt/elastic-internal/xpack-file-realm
+              name: elastic-internal-xpack-file-realm
+              readOnly: true
+            - mountPath: /usr/share/elasticsearch/data
+              name: elasticsearch-data
+            - mountPath: /usr/share/elasticsearch/logs
+              name: elasticsearch-logs
+          - command:
+            - bash
+            - -c
+            - /mnt/elastic-internal/scripts/suspend.sh
+            env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: HEADLESS_SERVICE_NAME
+              value: {{ .Values.elasticsearch.name }}-es-ingest-data
+            image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.version }}
+            imagePullPolicy: IfNotPresent
+            name: elastic-internal-suspend
+            resources:
+              {{- toYaml .Values.elasticsearch.data.init.resources | nindent 14 }}
+          {{- with .Values.elasticsearch.data.tolerations }}    
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}  
+          {{- with .Values.elasticsearch.data.affinity }} 
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}  
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+            - ReadWriteOnce         
+            resources:
+              requests:
+                storage: {{ .Values.elasticsearch.data.storage }}
+            storageClassName: {{ .Values.elasticsearch.data.storageClassName }}   
+  podDisruptionBudget: {}
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.elasticsearch.name }}-es-master
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  minAvailable: {{ .Values.elasticsearch.master.pod.DisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      elasticsearch.k8s.elastic.co/statefulset-name: {{ .Values.elasticsearch.name }}-es-master
+      elasticsearch.k8s.elastic.co/cluster-name: {{ .Values.elasticsearch.name }}
+      elasticsearch.k8s.elastic.co/node-data: "false"
+      elasticsearch.k8s.elastic.co/node-master: "true"
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.elasticsearch.name }}-es-ingest-data 
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  minAvailable: {{ .Values.elasticsearch.data.pod.DisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      elasticsearch.k8s.elastic.co/statefulset-name: {{ .Values.elasticsearch.name }}-es-ingest-data
+      elasticsearch.k8s.elastic.co/cluster-name: {{ .Values.elasticsearch.name }}
+      elasticsearch.k8s.elastic.co/node-data: "true"
+      elasticsearch.k8s.elastic.co/node-master: "false"
+
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elasticsearch-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}  
+  annotations:
+    kubernetes.io/ingress.class:  {{ .Values.elasticsearch.ingress.ingress_class }}
+    nginx.ingress.kubernetes.io/backend-protocol: {{ .Values.elasticsearch.ingress.backend_protocol }}
+spec:
+  rules:
+    - host: {{ .Values.elasticsearch.ingress.host }}
+      http:     
+          paths:
+            - path: {{ .Values.elasticsearch.ingress.path }}
+              pathType: ImplementationSpecific
+              backend:
+                service:
+                  name: {{ .Values.elasticsearch.name }}-es-ingest-data 
+                  port:
+                    number: {{ .Values.elasticsearch.ingress.port }}   
+

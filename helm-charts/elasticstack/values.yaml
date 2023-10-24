@@ -1,0 +1,224 @@
+customer: opsteam
+namespace: elasticsearch
+environment: staging
+version: 8.8.1
+
+elasticsearch:
+  name: elasticsearch
+### Master Config ###
+  master:
+    replicas: 3
+    pod:
+      DisruptionBudget:
+        minAvailable: 2
+    jvm:  "-Xms1g -Xmx1g"
+    storage: 10Gi
+    storageClassName: gp2
+    resources:
+      limits:
+        memory: 2Gi
+      requests:
+        memory: 1Gi
+    init:    
+      resources:
+        limits:
+          cpu: 100m
+          memory: 50Mi
+        requests:
+          cpu: 100m
+          memory: 50Mi            
+    tolerations: {}
+    #- key: "elasticsearch-teste"
+    #  operator: "Exists"
+    #  effect: "NoSchedule"
+    affinity: {}
+      #nodeAffinity:
+      #  requiredDuringSchedulingIgnoredDuringExecution:
+      #    nodeSelectorTerms:
+      #    - matchExpressions:
+      #      - key: eks.amazonaws.com/nodegroup
+      #        operator: In
+      #        values:
+      #        - production-elasticsearch-node-group 
+      #podAntiAffinity:
+      #  preferredDuringSchedulingIgnoredDuringExecution:
+      #  - weight: 1
+      #    podAffinityTerm:
+      #      labelSelector:
+      #        matchExpressions:
+      #        - key: elasticsearch.k8s.elastic.co/node-master
+      #          operator: In
+      #          values:
+      #          - "true"
+      #      topologyKey: "kubernetes.io/zone"
+      #  requiredDuringSchedulingIgnoredDuringExecution:
+      #  - labelSelector:
+      #      matchExpressions:
+      #      - key: elasticsearch.k8s.elastic.co/node-master
+      #        operator: In
+      #        values:
+      #        - "true"
+      #    topologyKey: "kubernetes.io/hostname"                 
+### Data Config ###              
+  data:
+    replicas: 3
+    pod:
+      DisruptionBudget:
+        minAvailable: 2 
+    jvm: "-Xms4g -Xmx4g"
+    storage: 10Gi
+    storageClassName: gp2    
+    resources:
+      limits:
+        memory: 6Gi
+      requests:
+        memory: 4Gi
+    init:
+      resources:
+        limits:
+          cpu: 100m
+          memory: 50Mi
+        requests:
+          cpu: 100m
+          memory: 50Mi          
+    tolerations: {}
+    #- key: "elasticsearch-teste"
+    #  operator: "Exists"
+    #  effect: "NoSchedule"
+    affinity: {}
+      #nodeAffinity:
+      #  requiredDuringSchedulingIgnoredDuringExecution:
+      #    nodeSelectorTerms:
+      #    - matchExpressions:
+      #      - key: eks.amazonaws.com/nodegroup
+      #        operator: In
+      #        values:
+      #        - production-elasticsearch-node-group    
+      #podAntiAffinity:
+      #  requiredDuringSchedulingIgnoredDuringExecution:
+      #  - labelSelector:
+      #      matchExpressions:
+      #      - key: elasticsearch.k8s.elastic.co/node-data
+      #        operator: In
+      #        values:
+      #        - "true"
+      #    topologyKey: "kubernetes.io/hostname"                          
+
+  ingress:
+    ingress_class: internal-nginx
+    backend_protocol: HTTPS
+    host: elasticsearch.ops.team
+    path: /
+    port: 9200 
+### Kibana Config ###
+kibana:
+  replicas: 1
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      memory: 1Gi
+  ingress:
+    ingress_class: internal-nginx
+    backend_protocol: HTTPS
+    host: kibana-teste.ops.team
+    path: /
+    port: 5601
+### Filebeat Config ###      
+filebeat: 
+  enabled: false
+  k8s_cluster_name: production-cluster-logging
+### APM Config ###
+apm: 
+  enabled: false  
+### Exporter Config ###
+exporter: 
+  enabled: true  
+### Collector Config ###
+collector:
+  enabled: false
+  config: 
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:55691
+          http:
+            endpoint: 0.0.0.0:55681                     
+    processors:
+      # ...
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 2000
+      batch:    
+
+    exporters:
+      logging:
+        verbosity: detailed
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+      otlp/elastic: 
+        # Elastic APM server https endpoint without the "https://" prefix
+        endpoint: "http://apm-server-elasticsearch:8200"  
+        headers:
+          # Elastic APM Server secret token
+          Authorization: ""   
+        tls: 
+          insecure: true   
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [logging, otlp/elastic]
+        metrics:
+          receivers: [otlp]
+          exporters: [logging, otlp/elastic, prometheus]
+        logs: 
+          receivers: [otlp]
+          exporters: [logging, otlp/elastic]
+
+kube_state_metrics:
+  enabled: false
+
+metricbeat:
+  enabled: false  
+  kube_state_metrics:
+    hosts: ["kube-state-metrics.kube-system.svc:8080"]
+
+
+lifecycle: {}
+  #poststart:
+  #  exec:
+  #    command:
+  #      - bash
+  #      - -c
+  #      - |
+  #        #!/bin/bash
+  #        # Create ILM Policy
+  #        ILM_POLICY_NAME=ilm-teste
+  #        INDEX_PATTERN="ns-*"
+  #        WARM_PHASE_MIN_AGE=10d
+  #        MAX_NUM_SEGMENTS=1
+  #        DELETE_MIN_AGE=15d
+  #        ELASTIC_USER=${ELASTIC_USER}
+  #        ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+  #        ES_URL=https://localhost:9200
+  #        #Snapshot to aws s3 bucket
+  #        REPO_NAME=snp-elasticsearch
+  #        BUCKET_NAME=snp-elasticsearch
+  #        BUCKET_STORAGE_CLASS=intelligent_tiering #standard, reduced_redundancy, standard_ia, onezone_ia and intelligent_tiering
+  #        AWS_REGION=us-east-1
+  #        #Snapshot Policy
+  #        SNP_POLICY_NAME=snp-elastic
+  #        SNP_SCHEDULE="0 0 22 * * ?"
+  #        SNP_REPOSITORY=snp-elasticsearch
+  #        SNP_NAME=snp-daily
+  #        SNP_EXPIRE_AFTER=30d
+  #        SNP_MIN_COUNT=5
+  #        SNP_MAX_COUNT=50
+  #        while [[ "$(curl -k -u ${ELASTIC_USER}:${ELASTIC_PASSWORD} -s -o /dev/null -w '%{http_code}\n' $ES_URL/_cluster/health)" != "200" ]]; do sleep 1; done
+  #        curl -XPUT -k -u $ELASTIC_USER:$ELASTIC_PASSWORD "$ES_URL/_ilm/policy/$ILM_POLICY_NAME" -H 'Content-Type: application/json' -d '{"policy": {"phases": {"warm": {"min_age": "'$WARM_PHASE_MIN_AGE'", "actions": { "forcemerge": { "max_num_segments": '$MAX_NUM_SEGMENTS' }}}, "delete": {"min_age": "'$DELETE_MIN_AGE'", "actions": {"delete": {}}}}}}'   
+  #        curl -XPUT -k -u $ELASTIC_USER:$ELASTIC_PASSWORD "$ES_URL/_index_template/$ILM_POLICY_NAME" -H 'Content-Type: application/json' -d '{"index_patterns": ["'$INDEX_PATTERN'"],"template":{"settings": {"index.lifecycle.name": "'$ILM_POLICY_NAME'"}}}'
+  #        curl -XPUT -k -u $ELASTIC_USER:$ELASTIC_PASSWORD "$ES_URL/_snapshot/$REPO_NAME" -H 'Content-Type: application/json' -d '{"type": "s3", "settings": {"client": "default", "bucket": "'$BUCKET_NAME'", "region": "'$AWS_REGION'", "storage_class": "'$BUCKET_STORAGE_CLASS'" }}'
+  #        curl -XPUT -k -u $ELASTIC_USER:$ELASTIC_PASSWORD "https://localhost:9200/_slm/policy/snp-elastic?pretty" -H 'Content-Type: application/json' -d '{"schedule": "'"'$SNP_SCHEDULE'"'", "name": "'$SNP_NAME'", "repository": "'$SNP_REPOSITORY'", "config": {"indices": "*","include_global_state": true}, "retention": {"expire_after": "'$SNP_EXPIRE_AFTER'", "min_count": '$SNP_MIN_COUNT', "max_count": '$SNP_MAX_COUNT' }}'
+  #        curl -X PUT -k -u $ELASTIC_USER:$ELASTIC_PASSWORD "$ES_URL/_ilm/policy/my_policy?pretty" -H 'Content-Type: application/json' -d '{ "policy": { "phases": { "delete": { "actions": { "wait_for_snapshot" : { "policy": "'$ILM_POLICY_NAME'" }}}}}}'

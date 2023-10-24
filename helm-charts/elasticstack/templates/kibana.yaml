@@ -1,0 +1,212 @@
+---
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}  
+spec:
+  count: {{ .Values.kibana.replicas }}
+  version: {{ .Values.version }}
+  elasticsearchRef:
+    name: {{ .Values.elasticsearch.name }}
+  config:
+    xpack.reporting.kibanaServer.hostname: localhost
+    xpack.security.authc.providers:
+      anonymous.anonymous1:
+        order: 0
+        credentials:
+          username: ${ELASTIC_USER}
+          password: ${ELASTIC_PASSWORD}
+  podTemplate:
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - env:
+        - name: SERVER_PUBLICBASEURL
+          value: "https://{{ .Values.kibana.ingress.host }}"      
+        - name: ELASTIC_USER
+          value: "elastic"
+        - name: ELASTIC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.elasticsearch.name }}-es-elastic-user 
+              key: elastic
+        image: docker.elastic.co/kibana/kibana:{{ .Values.version }}
+        imagePullPolicy: IfNotPresent
+        name: kibana
+        ports:
+        - containerPort: 5601
+          name: https
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /app/home
+            port: 5601
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          {{- toYaml .Values.kibana.resources | nindent 10 }}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /mnt/elastic-internal/http-certs
+          name: elastic-internal-http-certificates
+          readOnly: true
+        - mountPath: /mnt/elastic-internal/kibana-config
+          name: elastic-internal-kibana-config
+          readOnly: true
+        - mountPath: /usr/share/kibana/config
+          name: elastic-internal-kibana-config-local
+        - mountPath: /usr/share/kibana/config/elasticsearch-certs
+          name: elasticsearch-certs
+          readOnly: true
+        - mountPath: /usr/share/kibana/data
+          name: kibana-data
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: true
+      initContainers:
+      - command:
+        - /usr/bin/env
+        - bash
+        - -c
+        - "#!/usr/bin/env bash\nset -eux\n\ninit_config_initialized_flag=/mnt/elastic-internal/kibana-config-local/elastic-internal-init-config.ok\n\nif
+          [[ -f \"${init_config_initialized_flag}\" ]]; then\n    echo \"Kibana configuration
+          already initialized.\"\n\texit 0\nfi\n\necho \"Setup Kibana configuration\"\n\nln
+          -sf /mnt/elastic-internal/kibana-config/* /mnt/elastic-internal/kibana-config-local/\n\ntouch
+          \"${init_config_initialized_flag}\"\necho \"Kibana configuration successfully
+          prepared.\"\n"
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: spec.nodeName
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        image: docker.elastic.co/kibana/kibana:{{ .Values.version }}
+        imagePullPolicy: IfNotPresent
+        name: elastic-internal-init-config
+        resources:
+          limits:
+            cpu: 100m
+            memory: 50Mi
+          requests:
+            cpu: 100m
+            memory: 50Mi
+        securityContext:
+          privileged: false
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /mnt/elastic-internal/http-certs
+          name: elastic-internal-http-certificates
+          readOnly: true
+        - mountPath: /mnt/elastic-internal/kibana-config
+          name: elastic-internal-kibana-config
+          readOnly: true
+        - mountPath: /mnt/elastic-internal/kibana-config-local
+          name: elastic-internal-kibana-config-local
+        - mountPath: /usr/share/kibana/config/elasticsearch-certs
+          name: elasticsearch-certs
+          readOnly: true
+        - mountPath: /usr/share/kibana/data
+          name: kibana-data
+      preemptionPolicy: PreemptLowerPriority
+      priority: 0
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: default
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+        tolerationSeconds: 300
+      - effect: NoExecute
+        key: node.kubernetes.io/unreachable
+        operator: Exists
+        tolerationSeconds: 300
+      volumes:
+      - name: elastic-internal-http-certificates
+        secret:
+          defaultMode: 420
+          optional: false
+          secretName: kibana-kb-http-certs-internal
+      - name: elastic-internal-kibana-config
+        secret:
+          defaultMode: 420
+          optional: false
+          secretName: kibana-kb-config
+      - emptyDir: {}
+        name: elastic-internal-kibana-config-local
+      - name: elasticsearch-certs
+        secret:
+          defaultMode: 420
+          optional: false
+          secretName: kibana-kb-es-ca
+      - emptyDir: {}
+        name: kibana-data
+
+---
+
+#apiVersion: v1
+#kind: Service
+#metadata:
+#    name: kibana-kb-http-{{ .Values.elasticsearch.name }} 
+#    namespace: {{ .Values.namespace }}
+#spec:
+#    ports:
+#      - port: 5601
+#        targetPort: 5601
+#        protocol: TCP
+#        name: https
+#    type: NodePort     
+#    selector:
+#        app: kibana
+#
+#---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kibana-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}  
+  annotations:
+    kubernetes.io/ingress.class: {{ .Values.kibana.ingress.ingress_class }}
+    nginx.ingress.kubernetes.io/backend-protocol: {{ .Values.kibana.ingress.backend_protocol }}
+spec:
+  rules:
+    - host: {{ .Values.kibana.ingress.host }}
+      http:     
+          paths:
+            - path: {{ .Values.kibana.ingress.path }}
+              pathType: ImplementationSpecific
+              backend:
+                service:
+                  name: kibana-kb-http
+                  port:
+                    number: {{ .Values.kibana.ingress.port }}

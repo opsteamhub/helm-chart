@@ -1,0 +1,107 @@
+{{- if and .Values.apm.enabled -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apm-server-config-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    k8s-app: apm-server-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+data:
+  apm-server.yml: |-
+    apm-server:
+      host: "0.0.0.0:8200"
+      frontend:
+        enabled: false
+    setup.template.settings:
+      index:
+        number_of_shards: 1
+        codec: best_compression
+    setup.dashboards.enabled: false
+    setup.kibana:
+      host: "https://{{ .Values.kibana.ingress.host }}:443"
+      ssl.verification_mode: none
+    output.elasticsearch:
+      hosts: ["https://{{ .Values.elasticsearch.name }}-es-ingest-data:9200"]
+      username: ${ELASTICSEARCH_USER}
+      password: ${ELASTICSEARCH_PASSWORD}
+      ssl.verification_mode: none
+      indices:
+        - index: "apm-%{[beat.version]}-sourcemap"
+          when.contains:
+            processor.event: "sourcemap"
+        - index: "apm-%{[beat.version]}-error-%{+yyyy.MM.dd}"
+          when.contains:
+            processor.event: "error"
+        - index: "apm-%{[beat.version]}-transaction-%{+yyyy.MM.dd}"
+          when.contains:
+            processor.event: "transaction"
+        - index: "apm-%{[beat.version]}-span-%{+yyyy.MM.dd}"
+          when.contains:
+            processor.event: "span"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm-server-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apm-server-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  ports:
+  - port: 8200
+    targetPort: 8200
+    name: http
+    nodePort: 30001
+  selector:
+    app: apm-server-{{ .Values.elasticsearch.name }}
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apm-server-{{ .Values.elasticsearch.name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apm-server-{{ .Values.elasticsearch.name }}
+    customer: {{ .Values.customer }}
+    environment: {{ .Values.environment }}    
+spec:
+  replicas: 1
+  selector:
+    metadata:
+    matchLabels:
+      app: apm-server-{{ .Values.elasticsearch.name }}  
+  template:
+    metadata:
+      labels:
+        app: apm-server-{{ .Values.elasticsearch.name }} 
+    spec:
+      containers:     
+      - name: apm-server-{{ .Values.elasticsearch.name }}
+        image: docker.elastic.co/apm/apm-server:{{ .Values.version }}
+        env:
+        - name: ELASTICSEARCH_USER
+          value: "elastic"
+        - name: ELASTICSEARCH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.elasticsearch.name }}-es-elastic-user 
+              key: elastic        
+        ports:
+        - containerPort: 8200
+          name: apm-port
+        volumeMounts:
+        - name: apm-server-config-{{ .Values.elasticsearch.name }}
+          mountPath: /usr/share/apm-server/apm-server.yml
+          readOnly: true
+          subPath: apm-server.yml
+      volumes:
+      - name: apm-server-config-{{ .Values.elasticsearch.name }}
+        configMap:
+          name: apm-server-config-{{ .Values.elasticsearch.name }}
+{{- end }}    
